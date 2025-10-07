@@ -1,10 +1,11 @@
 from fastapi import HTTPException, APIRouter
 from fastapi.responses import JSONResponse
 from app.models.task_model import Task, TaskUpdate
-from app.utils.storage import tasks
+from app.db.database import collection_name
+from bson import ObjectId
 import json
 
-router = APIRouter(tags=["Tasks"])
+router = APIRouter(prefix = '/tasks',tags=["Tasks"])
 
 @router.get("/about")
 def about():
@@ -12,36 +13,41 @@ def about():
 
 @router.get("/view")
 def view():
+    tasks = list(collection_name.find())
+    for task in tasks:
+        task["_id"] = str(task['_id'])
     return tasks
 
 @router.get("/view/{task_id}")
 def view_task(task_id: str):
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="id not found")
-    return tasks[task_id]
+    task = collection_name.find_one({"_id":ObjectId(task_id)})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task['_id'] = str(task['_id'])
+    return task
 
 @router.post("/create")
 def create_task(task: Task):
-    if task.id in tasks:
-        raise HTTPException(status_code=400, detail="task already exists")
-    tasks[task.id] = task
-    return {"message": "task created successfully", "task": task}
+    new_task = task.model_dump()
+    result = collection_name.insert_one(new_task)
+    return {"message": "task created successfully", "id": str(result.inserted_id)}
 
 @router.put("/update/{task_id}")
 def update_task(task_id: str, update_task: TaskUpdate):
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="task not found")
 
-    existing_task = tasks[task_id].model_dump()
-    updated_data = update_task.model_dump(exclude_unset=True)
-
-    existing_task.update(updated_data)
-    tasks[task_id] = Task(**existing_task)
+    data = update_task.model_dump()
+    updated_task={}
+    for key,value in data.items():
+        if value is not None:
+            updated_task[key] = value
+    result = collection_name.update_one({"_id":ObjectId(task_id)}, {"$set":updated_task})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Id not found")
     return JSONResponse(status_code=200, content={"message": "updated successfully!"})
 
 @router.delete("/delete/{task_id}")
 def delete_task(task_id: str):
-    if task_id not in tasks:
+    result = collection_name.delete_one({"_id":ObjectId(task_id)})
+    if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="id not found")
-    del tasks[task_id]
     return JSONResponse(status_code=200, content={"message": "task deleted successfully"})
